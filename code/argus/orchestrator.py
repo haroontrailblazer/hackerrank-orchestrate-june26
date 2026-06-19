@@ -15,11 +15,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from argus import data_io
 from argus.agents import ConversationAgent, EvidenceAgent, RiskAgent, VisionAgent, adjudicator
+from argus.agents.evidence_agent import EvidenceDecision
 from argus.cache import VisionCache
 from argus.config import Settings
+from argus.constants import RISK_FLAG_ORDER
+from argus.harness import ResilienceHarness
 from argus.imaging import load_image_payload
 from argus.llm import Usage, build_backend
-from argus.schemas import ClaimInput, ClaimVerdict
+from argus.schemas import ClaimInput, ClaimVerdict, ConversationAnalysis, ImageFinding
 
 
 class Orchestrator:
@@ -40,10 +43,28 @@ class Orchestrator:
         self.evidence_agent = EvidenceAgent(self.evidence_rules)
         self.risk_agent = RiskAgent()
 
+        # Resilience/control layer wrapping every agent step.
+        self.harness = ResilienceHarness(
+            timeout=settings.step_timeout,
+            retries=settings.step_retries,
+            rpm=settings.rpm,
+            circuit_threshold=settings.circuit_threshold,
+            circuit_reset=settings.circuit_reset,
+        )
+
     # -- single claim ---------------------------------------------------------
     def process(self, claim: ClaimInput) -> ClaimVerdict:
-        conversation = self.conversation_agent.analyze(claim.user_claim, claim.claim_object)
+        h = self.harness
 
+        # 1) Claim extraction (LLM/network) -> fallback to an empty analysis.
+        conversation = h.run(
+            "conversation",
+            lambda: self.conversation_agent.analyze(claim.user_claim, claim.claim_object),
+            lambda: ConversationAnalysis(),
+            key="conversation",
+        )
+
+        # 2) Per-image inspection (VLM/network) -> failed image becomes unusable.
         findings = []
         for rel in claim.image_list:
             payload = load_image_payload(
@@ -51,20 +72,65 @@ class Orchestrator:
                 max_edge=self.settings.max_image_edge,
                 quality=self.settings.jpeg_quality,
             )
-            findings.append(self.vision_agent.inspect(payload, claim.claim_object, conversation))
+            findings.append(
+                h.run(
+                    "vision",
+                    lambda p=payload: self.vision_agent.inspect(p, claim.claim_object, conversation),
+                    lambda p=payload: ImageFinding(
+                        image_id=p.image_id, usable=False, detected_object="unknown",
+                        note="vision step failed/timeout",
+                    ),
+                    key="vision",
+                )
+            )
 
-        evidence = self.evidence_agent.assess(conversation, findings, claim.claim_object)
-        risk_str, risk_bools = self.risk_agent.assess(
-            conversation, findings, self.history.get(claim.user_id), claim.claim_object
+        # 3) Evidence + 4) Risk (deterministic) -> error-isolated, no timeout/circuit.
+        evidence = h.run(
+            "evidence",
+            lambda: self.evidence_agent.assess(conversation, findings, claim.claim_object),
+            lambda: EvidenceDecision(False, "evidence step error; routed to manual review.", False),
+            network=False,
+        )
+        risk_str, risk_bools = h.run(
+            "risk",
+            lambda: self.risk_agent.assess(
+                conversation, findings, self.history.get(claim.user_id), claim.claim_object
+            ),
+            lambda: (
+                "manual_review_required",
+                {n: (n == "manual_review_required") for n in RISK_FLAG_ORDER},
+            ),
+            network=False,
         )
 
+        # 5) Adjudication -> fallback verdict keeps the claimed part, defers decision.
+        def _verdict_fallback():
+            return adjudicator.Verdict(
+                claim_status="not_enough_information",
+                issue_type="unknown",
+                object_part=conversation.asserted_object_part or "unknown",
+                severity="unknown",
+                supporting_image_ids="none",
+                justification="Adjudication step failed; routed to manual review.",
+            )
+
         if self.settings.adjudicator == "llm":
-            v = adjudicator.adjudicate_llm(
-                self.backend, conversation, findings, evidence, risk_str, claim.claim_object
+            v = h.run(
+                "adjudicator",
+                lambda: adjudicator.adjudicate_llm(
+                    self.backend, conversation, findings, evidence, risk_str, claim.claim_object
+                ),
+                _verdict_fallback,
+                key="adjudicator",
             )
         else:
-            v = adjudicator.adjudicate_rules(
-                conversation, findings, evidence, risk_bools, claim.claim_object
+            v = h.run(
+                "adjudicator",
+                lambda: adjudicator.adjudicate_rules(
+                    conversation, findings, evidence, risk_bools, claim.claim_object
+                ),
+                _verdict_fallback,
+                network=False,
             )
 
         return ClaimVerdict(
@@ -139,4 +205,5 @@ class Orchestrator:
         u["vision_model"] = self.settings.vision_model
         u["reasoning_model"] = self.settings.reasoning_model
         u["adjudicator"] = self.settings.adjudicator
+        u["harness"] = self.harness.stats.as_dict()
         return u

@@ -30,8 +30,8 @@ class ConversationAnalysis(BaseModel):
     is responsible for normalising it to the allowed vocabulary.
     """
 
-    asserted_issue_type: str = Field(description="Closest issue_type the user claims, or 'unknown'.")
-    asserted_object_part: str = Field(description="Object part the user wants reviewed, or 'unknown'.")
+    asserted_issue_type: str = Field(default="unknown", description="Closest issue_type the user claims, or 'unknown'.")
+    asserted_object_part: str = Field(default="unknown", description="Object part the user wants reviewed, or 'unknown'.")
     asserted_severity: Literal["minor", "moderate", "severe", "unspecified"] = "unspecified"
     parts_mentioned: list[str] = Field(default_factory=list)
     claim_summary: str = Field(default="", description="One short sentence: what is being claimed.")
@@ -64,7 +64,7 @@ class ImageFinding(BaseModel):
 class AdjudicationResult(BaseModel):
     """The decision fields an LLM adjudicator returns (Strategy B)."""
 
-    claim_status: Literal["supported", "contradicted", "not_enough_information"]
+    claim_status: Literal["supported", "contradicted", "not_enough_information"] = "not_enough_information"
     issue_type: str = "unknown"
     object_part: str = "unknown"
     severity: Literal["none", "low", "medium", "high", "unknown"] = "unknown"

@@ -151,6 +151,13 @@ The offline mock run completes in seconds.
 - **Retries**: `tenacity` random-exponential backoff on `RateLimitError` /
   `APIConnectionError` / `InternalServerError` (SDK auto-retry is disabled to
   avoid double-retrying), so transient 429/5xx don't fail a claim.
+- **Resilience harness** (`argus/harness.py`): every agent step also runs under a
+  per-step wall-clock timeout, step-level retries, a per-key **circuit breaker**
+  (fast-fail a repeatedly-failing provider for a cooldown), a shared **RPM token
+  bucket** (`ARGUS_RPM`) layered on top of the worker-concurrency cap, and **error
+  isolation** (a failed step degrades to a safe value rather than crashing the
+  claim). Harness counters (`attempts`/`retries`/`timeouts`/`failures`/
+  `circuit_skips`) are reported in the run usage summary.
 - **Batch API (50% cheaper)**: the test set is not latency-sensitive. Submitting
   the 126 requests via Anthropic's Message Batches API halves token cost and
   removes RPM pressure (results within ~1 h). Recommended for the final

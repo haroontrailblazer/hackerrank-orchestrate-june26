@@ -49,7 +49,7 @@ def run_strategy(label: str, adjudicator: str, provider: str | None, claims) -> 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Argus evaluation / strategy comparison")
-    p.add_argument("--provider", choices=["mock", "anthropic", "openai"])
+    p.add_argument("--provider", choices=["mock", "anthropic", "openai", "nvidia"])
     p.add_argument("--final", default="rules", help="strategy label to mark as final (default: rules)")
     p.add_argument(
         "--strategies",

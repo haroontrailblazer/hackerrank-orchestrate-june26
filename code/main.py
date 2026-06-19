@@ -55,7 +55,7 @@ def build_settings(args: argparse.Namespace) -> Settings:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Argus multi-modal evidence review")
-    p.add_argument("--provider", choices=["mock", "anthropic", "openai"])
+    p.add_argument("--provider", choices=["mock", "anthropic", "openai", "nvidia"])
     p.add_argument("--vision-model")
     p.add_argument("--reasoning-model")
     p.add_argument("--adjudicator", choices=["rules", "llm"])

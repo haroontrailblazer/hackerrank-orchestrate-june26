@@ -27,6 +27,10 @@ class Settings:
     reasoning_model: str = field(default_factory=lambda: os.getenv("ARGUS_REASONING_MODEL", ""))
     # Adjudication strategy: "rules" (deterministic, default) or "llm".
     adjudicator: str = field(default_factory=lambda: os.getenv("ARGUS_ADJUDICATOR", "rules"))
+    # NVIDIA NIM / API Catalog base URL (override for a self-hosted NIM container).
+    nvidia_base_url: str = field(
+        default_factory=lambda: os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    )
 
     # --- paths ---------------------------------------------------------------
     repo_root: Path = field(default_factory=_repo_root)
@@ -42,6 +46,13 @@ class Settings:
     max_workers: int = field(default_factory=lambda: int(os.getenv("ARGUS_MAX_WORKERS", "4")))
     max_retries: int = field(default_factory=lambda: int(os.getenv("ARGUS_MAX_RETRIES", "4")))
     request_timeout: float = field(default_factory=lambda: float(os.getenv("ARGUS_TIMEOUT", "120")))
+
+    # --- resilience harness (per-agent-step controls) -----------------------
+    step_timeout: float = field(default_factory=lambda: float(os.getenv("ARGUS_STEP_TIMEOUT", "180")))
+    step_retries: int = field(default_factory=lambda: int(os.getenv("ARGUS_STEP_RETRIES", "2")))
+    rpm: int = field(default_factory=lambda: int(os.getenv("ARGUS_RPM", "0")))  # 0 = unlimited
+    circuit_threshold: int = field(default_factory=lambda: int(os.getenv("ARGUS_CIRCUIT_THRESHOLD", "5")))
+    circuit_reset: float = field(default_factory=lambda: float(os.getenv("ARGUS_CIRCUIT_RESET", "30")))
 
     # --- caching -------------------------------------------------------------
     use_vision_cache: bool = field(default_factory=lambda: os.getenv("ARGUS_VISION_CACHE", "1") != "0")
@@ -87,6 +98,11 @@ def _default_vision_model(provider: str) -> str:
         return "claude-opus-4-8"
     if provider == "openai":
         return "gpt-4o"
+    if provider == "nvidia":
+        # A stable, broadly-available catalog VLM. Override ARGUS_VISION_MODEL
+        # with a newer slug (e.g. a Qwen / Kimi / MiniMax vision model) from
+        # build.nvidia.com -- the catalog evolves, so confirm the exact id there.
+        return "meta/llama-3.2-90b-vision-instruct"
     return "mock-vision"
 
 
@@ -95,4 +111,6 @@ def _default_reasoning_model(provider: str) -> str:
         return "claude-haiku-4-5"  # cheap text model for claim extraction
     if provider == "openai":
         return "gpt-4o-mini"
+    if provider == "nvidia":
+        return "meta/llama-3.3-70b-instruct"  # text model for claim extraction
     return "mock-reasoning"
