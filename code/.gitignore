@@ -1,0 +1,7 @@
+# Argus -- exclude from code.zip and from git
+.env
+.argus_cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
